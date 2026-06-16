@@ -1,14 +1,28 @@
 import { useRef } from "react";
 import { useParticleStore } from "@/store/useParticleStore";
-import { ParticleConfig } from "@/store/particleStore";
-import { Download, Upload, RotateCcw, ChevronLeft, ChevronRight, Settings } from "lucide-react";
+import { Download, Upload } from "lucide-react";
+
+interface ExportedConfig {
+  version: number;
+  particleConfig: Record<string, unknown>;
+  explosionConfig: Record<string, unknown>;
+  activePresetId?: string;
+  exportedAt: string;
+}
 
 export default function ExportButton() {
-  const { config, loadConfig } = useParticleStore();
+  const { particleConfig, explosionConfig, activePresetId, loadConfig } = useParticleStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExport = () => {
-    const json = JSON.stringify(config, null, 2);
+    const payload: ExportedConfig = {
+      version: 2,
+      particleConfig: JSON.parse(JSON.stringify(particleConfig)),
+      explosionConfig: JSON.parse(JSON.stringify(explosionConfig)),
+      activePresetId: activePresetId || undefined,
+      exportedAt: new Date().toISOString(),
+    };
+    const json = JSON.stringify(payload, null, 2);
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -28,10 +42,8 @@ export default function ExportButton() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const data = JSON.parse(ev.target?.result as string) as ParticleConfig;
-        if (data.emissionRate !== undefined) {
-          loadConfig(data);
-        }
+        const data = JSON.parse(ev.target?.result as string);
+        loadConfig(data);
       } catch {
         console.error("Invalid config file");
       }

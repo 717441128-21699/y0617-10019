@@ -75,22 +75,33 @@ const ATTRIBS = [
 ];
 
 const TF_VARYINGS = [
-  "vPosition",   // vec2  0-1
-  "vVelocity",   // vec2  2-3
-  "vLife",       // f     4
-  "vMaxLife",    // f     5
-  "vSeed",       // f     6
-  "vExplosionId",// f     7
-  "vPad",        // f     8
+  "vPosition",
+  "vVelocity",
+  "vLife",
+  "vMaxLife",
+  "vSeed",
+  "vExplosionId",
+  "vPad",
 ];
+
+const MAX_EXPLOSIONS = 8;
+
+export interface ExplosionParams {
+  strength?: number;
+  radius?: number;
+  duration?: number;
+}
 
 export interface ParticleEngine {
   update: (deltaTime: number, time: number) => void;
   render: () => void;
-  triggerExplosion: (x: number, y: number, engineTime: number, strength?: number) => void;
+  triggerExplosion: (x: number, y: number, engineTime: number, params?: ExplosionParams) => void;
   resize: (width: number, height: number) => void;
   setUniforms: (uniforms: Record<string, Float32Array | number>) => void;
   getActiveCount: () => number;
+  getMaxParticles: () => number;
+  getLastExplosionIndex: () => number;
+  getExplosionPos: (index: number) => [number, number];
   destroy: () => void;
 }
 
@@ -106,8 +117,9 @@ export function createParticleEngine(
 
   const updateUniforms = getUniformLocations(gl, updateProgram, [
     "uDeltaTime", "uTime", "uResolution", "uGravity", "uWind",
-    "uTurbulence", "uEmissionRate", "uExplosionPos", "uExplosionTime",
-    "uExplosionStrength", "uExplosionId", "uColorStart", "uColorEnd",
+    "uTurbulence", "uEmissionRate",
+    "uExpPos[0]", "uExpTime[0]", "uExpStrength[0]", "uExpRadius[0]", "uExpDuration[0]", "uExpCount",
+    "uColorStart", "uColorEnd",
   ]);
 
   const renderUniforms = getUniformLocations(gl, renderProgram, [
@@ -163,10 +175,16 @@ export function createParticleEngine(
   setupVAO(gl, renderVAO1, vbo1, renderAttribs);
 
   let currentReadIndex = 0;
-  let explosionTime = -100.0;
-  let explosionStrength = 0.0;
-  let explosionPos = [0, 0];
-  let explosionId = 0;
+
+  const expPos     = new Float32Array(MAX_EXPLOSIONS * 2);
+  const expTime    = new Float32Array(MAX_EXPLOSIONS);
+  const expStrength = new Float32Array(MAX_EXPLOSIONS);
+  const expRadius  = new Float32Array(MAX_EXPLOSIONS);
+  const expDuration = new Float32Array(MAX_EXPLOSIONS);
+  let expCount = 0;
+  let expWriteIndex = 0;
+  let lastExpIndex = -1;
+
   let resolution = [gl.canvas.width, gl.canvas.height];
   let activeCount = 0;
   let frameCount = 0;
@@ -175,6 +193,15 @@ export function createParticleEngine(
   const uniforms: Record<string, Float32Array | number> = {};
 
   function swap() { currentReadIndex = 1 - currentReadIndex; }
+
+  function uploadExplosionUniforms() {
+    gl.uniform2fv(updateUniforms["uExpPos[0]"]!, expPos);
+    gl.uniform1fv(updateUniforms["uExpTime[0]"]!, expTime);
+    gl.uniform1fv(updateUniforms["uExpStrength[0]"]!, expStrength);
+    gl.uniform1fv(updateUniforms["uExpRadius[0]"]!, expRadius);
+    gl.uniform1fv(updateUniforms["uExpDuration[0]"]!, expDuration);
+    gl.uniform1i(updateUniforms.uExpCount!, expCount);
+  }
 
   function update(deltaTime: number, time: number) {
     gl.useProgram(updateProgram);
@@ -191,15 +218,13 @@ export function createParticleEngine(
     );
     gl.uniform1f(updateUniforms.uTurbulence, (uniforms.uTurbulence as number) ?? 0.4);
     gl.uniform1f(updateUniforms.uEmissionRate, (uniforms.uEmissionRate as number) ?? 0.5);
-    gl.uniform2f(updateUniforms.uExplosionPos, explosionPos[0], explosionPos[1]);
-    gl.uniform1f(updateUniforms.uExplosionTime, explosionTime);
-    gl.uniform1f(updateUniforms.uExplosionStrength, explosionStrength);
-    gl.uniform1f(updateUniforms.uExplosionId, explosionId);
+
+    uploadExplosionUniforms();
 
     const cs = uniforms.uColorStart ?? new Float32Array([0, 0.95, 0.85, 1]);
     const ce = uniforms.uColorEnd ?? new Float32Array([0.1, 0.2, 0.9, 0]);
-    gl.uniform4f(updateUniforms.uColorStart, cs[0], cs[1], cs[2], cs[3]);
-    gl.uniform4f(updateUniforms.uColorEnd, ce[0], ce[1], ce[2], ce[3]);
+    gl.uniform4f(updateUniforms.uColorStart!, cs[0], cs[1], cs[2], cs[3]);
+    gl.uniform4f(updateUniforms.uColorEnd!, ce[0], ce[1], ce[2], ce[3]);
 
     const readVAO = currentReadIndex === 0 ? vao0 : vao1;
     const writeTF = currentReadIndex === 0 ? tf1 : tf0;
@@ -238,12 +263,12 @@ export function createParticleEngine(
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(renderProgram);
 
-    gl.uniform2f(renderUniforms.uResolution, resolution[0], resolution[1]);
+    gl.uniform2f(renderUniforms.uResolution!, resolution[0], resolution[1]);
     const cs = uniforms.uColorStart ?? new Float32Array([0, 0.95, 0.85, 1]);
     const ce = uniforms.uColorEnd ?? new Float32Array([0.1, 0.2, 0.9, 0]);
-    gl.uniform4f(renderUniforms.uColorStart, cs[0], cs[1], cs[2], cs[3]);
-    gl.uniform4f(renderUniforms.uColorEnd, ce[0], ce[1], ce[2], ce[3]);
-    gl.uniform1f(renderUniforms.uParticleSize, (uniforms.uParticleSize as number) ?? 4.0);
+    gl.uniform4f(renderUniforms.uColorStart!, cs[0], cs[1], cs[2], cs[3]);
+    gl.uniform4f(renderUniforms.uColorEnd!, ce[0], ce[1], ce[2], ce[3]);
+    gl.uniform1f(renderUniforms.uParticleSize!, (uniforms.uParticleSize as number) ?? 4.0);
 
     const readRenderVAO = currentReadIndex === 0 ? renderVAO0 : renderVAO1;
     gl.bindVertexArray(readRenderVAO);
@@ -257,11 +282,28 @@ export function createParticleEngine(
     gl.bindVertexArray(null);
   }
 
-  function triggerExplosion(x: number, y: number, engineTime: number, strength: number = 8000) {
-    explosionId++;
-    explosionPos = [x, y];
-    explosionTime = engineTime;
-    explosionStrength = strength;
+  function triggerExplosion(
+    x: number,
+    y: number,
+    engineTime: number,
+    params: ExplosionParams = {}
+  ) {
+    const strength = params.strength ?? 10000;
+    const radius = params.radius ?? 180;
+    const duration = params.duration ?? 1.2;
+
+    const idx = expWriteIndex;
+    expPos[idx * 2]     = x;
+    expPos[idx * 2 + 1] = y;
+    expTime[idx]        = engineTime;
+    expStrength[idx]    = strength;
+    expRadius[idx]      = radius;
+    expDuration[idx]    = duration;
+
+    lastExpIndex = idx;
+
+    expWriteIndex = (expWriteIndex + 1) % MAX_EXPLOSIONS;
+    if (expCount < MAX_EXPLOSIONS) expCount++;
   }
 
   function resize(width: number, height: number) {
@@ -274,6 +316,12 @@ export function createParticleEngine(
   }
 
   function getActiveCount() { return activeCount; }
+  function getMaxParticles() { return maxParticles; }
+  function getLastExplosionIndex() { return lastExpIndex; }
+  function getExplosionPos(index: number): [number, number] {
+    if (index < 0 || index >= MAX_EXPLOSIONS) return [0, 0];
+    return [expPos[index * 2], expPos[index * 2 + 1]];
+  }
 
   function destroy() {
     gl.deleteProgram(updateProgram);
@@ -288,7 +336,11 @@ export function createParticleEngine(
     gl.deleteTransformFeedback(tf1);
   }
 
-  return { update, render, triggerExplosion, resize, setUniforms, getActiveCount, destroy };
+  return {
+    update, render, triggerExplosion, resize, setUniforms,
+    getActiveCount, getMaxParticles, getLastExplosionIndex, getExplosionPos,
+    destroy,
+  };
 }
 
 function getUniformLocations(

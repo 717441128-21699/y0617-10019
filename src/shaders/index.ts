@@ -1,12 +1,15 @@
 export const UPDATE_VERT = `#version 300 es
 precision highp float;
 
+#define MAX_EXPLOSIONS 8
+
 in vec2 aPosition;
 in vec2 aVelocity;
 in float aLife;
 in float aMaxLife;
 in float aSeed;
 in float aExplosionId;
+in float aPad;
 
 uniform float uDeltaTime;
 uniform float uTime;
@@ -15,10 +18,14 @@ uniform vec2 uGravity;
 uniform vec2 uWind;
 uniform float uTurbulence;
 uniform float uEmissionRate;
-uniform vec2 uExplosionPos;
-uniform float uExplosionTime;
-uniform float uExplosionStrength;
-uniform float uExplosionId;
+
+uniform vec2  uExpPos[MAX_EXPLOSIONS];
+uniform float uExpTime[MAX_EXPLOSIONS];
+uniform float uExpStrength[MAX_EXPLOSIONS];
+uniform float uExpRadius[MAX_EXPLOSIONS];
+uniform float uExpDuration[MAX_EXPLOSIONS];
+uniform int   uExpCount;
+
 uniform vec4 uColorStart;
 uniform vec4 uColorEnd;
 
@@ -34,10 +41,6 @@ float hash(float n) {
     return fract(sin(n) * 43758.5453123);
 }
 
-float hash2(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-}
-
 vec2 noise2D(vec2 p) {
     return vec2(
         fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453) * 2.0 - 1.0,
@@ -45,13 +48,31 @@ vec2 noise2D(vec2 p) {
     );
 }
 
+bool explosionActive(int i) {
+    if (i >= uExpCount) return false;
+    float t = uTime - uExpTime[i];
+    return uExpStrength[i] > 0.0 && t >= 0.0 && t < uExpDuration[i];
+}
+
+float getExplosionIdFloat(int i) {
+    return float(i + 1) * 10000.0 + uExpTime[i] * 100.0;
+}
+
+float getHighestExplosionId() {
+    float maxId = 0.0;
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (i >= uExpCount) break;
+        if (explosionActive(i)) {
+            float id = getExplosionIdFloat(i);
+            if (id > maxId) maxId = id;
+        }
+    }
+    return maxId;
+}
+
 void main() {
     float dt = uDeltaTime;
-    float currentExplosionId = uExplosionId;
     float particleExplId = aExplosionId;
-    float timeSinceExplosion = uTime - uExplosionTime;
-    bool explosionActive = (uExplosionStrength > 0.0) && (timeSinceExplosion < 1.2);
-    bool notConsumedByExplosion = (particleExplId < currentExplosionId);
 
     float newLife = aLife - dt / max(aMaxLife, 0.01);
     vec2 newPos = aPosition;
@@ -67,49 +88,86 @@ void main() {
         (aPosition.y >  uResolution.y * 4.0);
     bool dead = (newLife <= 0.0) || offscreen;
 
-    bool inBurstWindow = (uExplosionStrength > 0.0) && (timeSinceExplosion < 0.12) && notConsumedByExplosion;
-    float burstProb = 0.0;
-    if (inBurstWindow) {
-        float tNorm = timeSinceExplosion / 0.12;
-        float envelope = (1.0 - tNorm) * (1.0 - tNorm);
-        burstProb = min(1.0, uExplosionStrength * 0.000018) * envelope;
-    }
-    bool forcedBurst = false;
-    if (burstProb > 0.0) {
-        float rb = hash(aSeed + currentExplosionId * 91.1 + floor(uTime * 240.0));
-        if (rb < burstProb) forcedBurst = true;
+    float highestExpId = getHighestExplosionId();
+
+    float burstTotal = 0.0;
+    vec2 burstPos = vec2(0.0);
+    float burstStrength = 0.0;
+    float burstRadius = 0.0;
+    float burstDuration = 0.0;
+    float burstExpId = 0.0;
+
+    if (highestExpId > particleExplId) {
+        for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+            if (i >= uExpCount) break;
+            if (!explosionActive(i)) continue;
+            float expId = getExplosionIdFloat(i);
+            if (expId <= particleExplId) continue;
+
+            float t = uTime - uExpTime[i];
+            if (t > 0.12) continue;
+
+            float tNorm = t / 0.12;
+            float envelope = (1.0 - tNorm) * (1.0 - tNorm);
+            float prob = min(1.0, uExpStrength[i] * 0.000016) * envelope;
+            float r = hash(aSeed + expId * 0.017 + float(i) * 97.3);
+
+            if (r < prob) {
+                burstTotal += 1.0;
+                burstPos = uExpPos[i];
+                burstStrength = uExpStrength[i];
+                burstRadius = uExpRadius[i];
+                burstDuration = uExpDuration[i];
+                burstExpId = expId;
+            }
+        }
     }
 
+    bool forcedBurst = burstTotal > 0.5;
+
     if (forcedBurst) {
-        float s = aSeed + currentExplosionId * 37.0;
-        float angle = hash(s * 3.1 + currentExplosionId * 17.3) * 6.2831853;
-        float speedMin = 120.0 + uExplosionStrength * 0.02;
-        float speedMax = 320.0 + uExplosionStrength * 0.08;
-        float speed = hash(s * 1.7 + currentExplosionId * 7.1) * (speedMax - speedMin) + speedMin;
-        newPos = uExplosionPos;
+        float s = aSeed + burstExpId * 0.037;
+        float angle = hash(s * 3.1 + burstExpId * 0.017) * 6.2831853;
+        float speedMin = 80.0 + burstStrength * 0.012;
+        float speedMax = 260.0 + burstStrength * 0.07;
+        float speed = hash(s * 1.7 + burstExpId * 0.071) * (speedMax - speedMin) + speedMin;
+        newPos = burstPos;
         newVel = vec2(cos(angle), sin(angle)) * speed;
         newLife = 1.0;
-        newMaxLife = hash(s * 2.9 + currentExplosionId * 11.7) * 1.6 + 0.9;
+        newMaxLife = hash(s * 2.9 + burstExpId * 0.0117) * 1.4 + 0.8;
         newSeed = s;
-        newExplId = currentExplosionId;
+        newExplId = burstExpId;
     } else if (dead) {
         float s = aSeed;
         float respawned = 0.0;
 
-        if (explosionActive && notConsumedByExplosion) {
-            float t = hash(s + currentExplosionId * 131.7);
-            float consumeProb = min(1.0, uExplosionStrength * 0.00008);
-            if (t < consumeProb) {
-                float angle = hash(s + currentExplosionId * 17.3) * 6.2831853;
-                float speedMin = 80.0 + uExplosionStrength * 0.015;
-                float speedMax = 250.0 + uExplosionStrength * 0.06;
-                float speed = hash(s + currentExplosionId * 7.1) * (speedMax - speedMin) + speedMin;
-                newPos = uExplosionPos;
+        float bestExpId = -1.0;
+        int bestIdx = -1;
+        for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+            if (i >= uExpCount) break;
+            if (!explosionActive(i)) continue;
+            float expId = getExplosionIdFloat(i);
+            if (expId <= particleExplId) continue;
+            if (expId > bestExpId) {
+                bestExpId = expId;
+                bestIdx = i;
+            }
+        }
+
+        if (bestIdx >= 0) {
+            float consumeProb = min(1.0, uExpStrength[bestIdx] * 0.00007);
+            float r = hash(s + bestExpId * 0.1317);
+            if (r < consumeProb) {
+                float angle = hash(s + bestExpId * 0.0173) * 6.2831853;
+                float speedMin = 60.0 + uExpStrength[bestIdx] * 0.01;
+                float speedMax = 220.0 + uExpStrength[bestIdx] * 0.05;
+                float speed = hash(s + bestExpId * 0.0071) * (speedMax - speedMin) + speedMin;
+                newPos = uExpPos[bestIdx];
                 newVel = vec2(cos(angle), sin(angle)) * speed;
                 newLife = 1.0;
-                newMaxLife = hash(s + currentExplosionId * 11.7) * 1.8 + 0.8;
-                newSeed = s + currentExplosionId * 101.3;
-                newExplId = currentExplosionId;
+                newMaxLife = hash(s + bestExpId * 0.0117) * 1.6 + 0.7;
+                newSeed = s + bestExpId * 0.1013;
+                newExplId = bestExpId;
                 respawned = 1.0;
             }
         }
@@ -144,15 +202,18 @@ void main() {
         vec2 wind = uWind * 110.0;
         vec2 acceleration = gravity + wind + turb;
 
-        if (explosionActive) {
-            vec2 toParticle = aPosition - uExplosionPos;
+        for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+            if (i >= uExpCount) break;
+            if (!explosionActive(i)) continue;
+            vec2 toParticle = aPosition - uExpPos[i];
             float dist = length(toParticle);
-            if (dist > 0.5) {
-                float decayT = exp(-timeSinceExplosion * 2.8);
-                float decayD = exp(-dist * 0.0045);
-                float force = uExplosionStrength * 0.12 * decayT * decayD;
-                acceleration += (toParticle / dist) * force;
-            }
+            if (dist < 0.5 || dist > uExpRadius[i] * 3.0) continue;
+            float t = uTime - uExpTime[i];
+            float dur = max(uExpDuration[i], 0.01);
+            float decayT = exp(-t * 3.0 / dur);
+            float decayD = exp(-dist / max(uExpRadius[i], 1.0));
+            float force = uExpStrength[i] * 0.15 * decayT * decayD;
+            acceleration += (toParticle / dist) * force;
         }
 
         vec2 updatedVel = aVelocity + acceleration * dt;
@@ -198,6 +259,7 @@ in float aLife;
 in float aMaxLife;
 in float aSeed;
 in float aExplosionId;
+in float aPad;
 
 uniform vec2 uResolution;
 uniform vec4 uColorStart;
