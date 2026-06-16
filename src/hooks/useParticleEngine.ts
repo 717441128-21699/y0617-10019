@@ -1,6 +1,6 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 import { createParticleEngine, ParticleEngine } from "@/utils/glUtils";
-import { useParticleStore } from "@/store/useParticleStore";
+import { useParticleStore, _applyPlaybackEvent } from "@/store/useParticleStore";
 import { EmitterShape, RecordedEvent } from "@/store/particleStore";
 
 const EMITTER_SHAPE_MAP: Record<EmitterShape, number> = {
@@ -10,72 +10,9 @@ const EMITTER_SHAPE_MAP: Record<EmitterShape, number> = {
   bottom: 3,
 };
 
-function applyEvent(e: RecordedEvent) {
-  const store = useParticleStore.getState();
-  const { type, payload } = e;
-
-  if (type === "param_change") {
-    const key = payload.key as string;
-    const value = payload.value as unknown;
-    switch (key) {
-      case "emissionRate":
-        store.setEmissionRate(value as number);
-        break;
-      case "gravity": {
-        const g = value as { x: number; y: number };
-        store.setGravity(g.x, g.y);
-        break;
-      }
-      case "wind": {
-        const w = value as { x: number; y: number };
-        store.setWind(w.x, w.y);
-        break;
-      }
-      case "turbulence":
-        store.setTurbulence(value as number);
-        break;
-      case "particleSize":
-        store.setParticleSize(value as number);
-        break;
-      case "emitterShape":
-        store.setEmitterShape(value as EmitterShape);
-        break;
-      case "explosionStrength":
-        store.setExplosionStrength(value as number);
-        break;
-      case "explosionRadius":
-        store.setExplosionRadius(value as number);
-        break;
-      case "explosionDuration":
-        store.setExplosionDuration(value as number);
-        break;
-      case "colorStart": {
-        const c = value as { r: number; g: number; b: number; a: number };
-        store.setColorStart(c.r, c.g, c.b, c.a);
-        break;
-      }
-      case "colorEnd": {
-        const c = value as { r: number; g: number; b: number; a: number };
-        store.setColorEnd(c.r, c.g, c.b, c.a);
-        break;
-      }
-    }
-  } else if (type === "preset_apply") {
-    const pid = payload.presetId as string;
-    store.applyPreset(pid);
-  } else if (type === "explosion") {
-    const x = payload.x as number;
-    const y = payload.y as number;
-    const engine = (window as unknown as { __pe?: ParticleEngine | null }).__pe;
-    if (engine) {
-      const cfg = store.explosionConfig;
-      engine.triggerExplosion(x, y, store.playbackTime, {
-        strength: cfg.strength,
-        radius: cfg.radius,
-        duration: cfg.duration,
-      });
-    }
-  }
+export interface CoordinateConverter {
+  toScreen: (engineX: number, engineY: number) => { x: number; y: number };
+  toEngine: (screenX: number, screenY: number) => { x: number; y: number };
 }
 
 export function useParticleEngine() {
@@ -85,7 +22,7 @@ export function useParticleEngine() {
   const runningRef = useRef(false);
 
   const startTimeRef = useRef(0);
-  const lastTimeRef = useRef(0);
+  const lastFrameTimeRef = useRef(0);
   const fpsFramesRef = useRef(0);
   const fpsTimeRef = useRef(0);
   const currentEngineTimeRef = useRef(0);
@@ -93,6 +30,47 @@ export function useParticleEngine() {
   const dprRef = useRef(1);
   const playbackEventIndexRef = useRef(0);
   const playbackStartTimeRef = useRef(0);
+  const playbackAccumRef = useRef(0); // 用于播放速度累积
+
+  const converter = useMemo<CoordinateConverter>(
+    () => ({
+      toScreen: (ex, ey) => {
+        const [bufW, bufH] = resolutionRef.current;
+        const dpr = dprRef.current || 1;
+        if (bufW === 0 || bufH === 0) return { x: 0, y: 0 };
+        return {
+          x: ex / dpr,
+          y: (bufH - ey) / dpr,
+        };
+      },
+      toEngine: (sx, sy) => {
+        const [bufW, bufH] = resolutionRef.current;
+        const dpr = dprRef.current || 1;
+        return {
+          x: sx * dpr,
+          y: bufH - sy * dpr,
+        };
+      },
+    }),
+    []
+  );
+
+  // 暴露转换器引用给外部（StatsOverlay用）
+  useEffect(() => {
+    (window as unknown as { __coordConv?: CoordinateConverter | null }).__coordConv = null;
+  }, []);
+
+  const triggerExplosionAtScreen = useCallback((sx: number, sy: number) => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const { x, y } = converter.toEngine(sx, sy);
+    const state = useParticleStore.getState();
+    engine.triggerExplosion(x, y, currentEngineTimeRef.current, {
+      strength: state.explosionConfig.strength,
+      radius: state.explosionConfig.radius,
+      duration: state.explosionConfig.duration,
+    });
+  }, [converter]);
 
   const init = useCallback(() => {
     const canvas = canvasRef.current;
@@ -121,6 +99,7 @@ export function useParticleEngine() {
 
     engineRef.current = engine;
     (window as unknown as { __pe?: ParticleEngine | null }).__pe = engine;
+    (window as unknown as { __coordConv?: CoordinateConverter | null }).__coordConv = converter;
 
     dprRef.current = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -143,7 +122,7 @@ export function useParticleEngine() {
     window.addEventListener("resize", doResize);
 
     startTimeRef.current = performance.now() / 1000;
-    lastTimeRef.current = startTimeRef.current;
+    lastFrameTimeRef.current = startTimeRef.current;
     fpsTimeRef.current = startTimeRef.current;
     fpsFramesRef.current = 0;
 
@@ -162,6 +141,8 @@ export function useParticleEngine() {
         setActiveParticles,
         setLastExplosionPos,
         isPlaying,
+        isPaused,
+        playbackSpeed,
         currentRecordingId,
         recordings,
         setPlaybackTime,
@@ -169,41 +150,88 @@ export function useParticleEngine() {
       } = state;
 
       const now = performance.now() / 1000;
-      const dt = Math.min(now - lastTimeRef.current, 0.05);
-      lastTimeRef.current = now;
+      const rawDt = Math.min(now - lastFrameTimeRef.current, 0.05);
+      lastFrameTimeRef.current = now;
 
+      // 根据播放状态决定 dt 和 time
+      let dt: number;
       let time: number;
+
       if (isPlaying && currentRecordingId) {
         const rec = recordings.find((r) => r.id === currentRecordingId);
         if (rec) {
           if (playbackStartTimeRef.current === 0) {
             playbackStartTimeRef.current = now;
             playbackEventIndexRef.current = 0;
+            playbackAccumRef.current = 0;
           }
-          const pt = now - playbackStartTimeRef.current;
-          setPlaybackTime(pt);
-          time = pt;
-
-          while (
-            playbackEventIndexRef.current < rec.events.length &&
-            rec.events[playbackEventIndexRef.current].time <= pt
-          ) {
-            const ev = rec.events[playbackEventIndexRef.current];
-            applyEvent(ev);
-            playbackEventIndexRef.current++;
-          }
-
+          const scaledDt = isPaused ? 0 : rawDt * playbackSpeed;
+          playbackAccumRef.current += scaledDt;
+          const pt = playbackAccumRef.current;
+          // 防止超出
           if (pt >= rec.duration) {
+            setPlaybackTime(rec.duration);
+            // 最后再把剩余事件执行完
+            while (playbackEventIndexRef.current < rec.events.length) {
+              const ev = rec.events[playbackEventIndexRef.current];
+              if (ev.time > rec.duration) break;
+              if (ev.type === "explosion") {
+                const px = ev.payload.x as number;
+                const py = ev.payload.y as number;
+                const cfg2 = state.explosionConfig;
+                e.triggerExplosion(px, py, rec.duration, {
+                  strength: cfg2.strength,
+                  radius: cfg2.radius,
+                  duration: cfg2.duration,
+                });
+              } else {
+                _applyPlaybackEvent(ev);
+              }
+              playbackEventIndexRef.current++;
+            }
             stopPlayback();
             playbackStartTimeRef.current = 0;
+            time = now - startTimeRef.current; // 结束后走实时时间
+          } else {
+            setPlaybackTime(pt);
+            time = pt;
+
+            // 按时间差推进事件
+            while (
+              playbackEventIndexRef.current < rec.events.length &&
+              rec.events[playbackEventIndexRef.current].time <= pt
+            ) {
+              const ev = rec.events[playbackEventIndexRef.current];
+              if (ev.type === "explosion") {
+                const px = ev.payload.x as number;
+                const py = ev.payload.y as number;
+                const cfg2 = state.explosionConfig;
+                // 用 pt 作为爆炸时间（按当前进度）
+                e.triggerExplosion(px, py, pt, {
+                  strength: cfg2.strength,
+                  radius: cfg2.radius,
+                  duration: cfg2.duration,
+                });
+              } else {
+                _applyPlaybackEvent(ev);
+              }
+              playbackEventIndexRef.current++;
+            }
           }
+          dt = scaledDt;
+          // 如果暂停则不推进模拟
+          if (isPaused) dt = 0;
         } else {
           time = now - startTimeRef.current;
+          dt = rawDt;
+          playbackStartTimeRef.current = 0;
         }
       } else {
         playbackStartTimeRef.current = 0;
         playbackEventIndexRef.current = 0;
+        playbackAccumRef.current = 0;
         time = now - startTimeRef.current;
+        dt = rawDt;
       }
 
       currentEngineTimeRef.current = time;
@@ -231,7 +259,9 @@ export function useParticleEngine() {
         uParticleSize: cfg.particleSize,
       });
 
-      e.update(dt, time);
+      if (dt > 0) {
+        e.update(dt, time);
+      }
       e.render();
       setActiveParticles(e.getActiveCount());
 
@@ -251,7 +281,7 @@ export function useParticleEngine() {
       runningRef.current = false;
       window.removeEventListener("resize", doResize);
     };
-  }, []);
+  }, [converter]);
 
   useEffect(() => {
     let cleanup: void | (() => void);
@@ -274,6 +304,7 @@ export function useParticleEngine() {
       const engine = engineRef.current;
       engineRef.current = null;
       (window as unknown as { __pe?: ParticleEngine | null }).__pe = null;
+      (window as unknown as { __coordConv?: CoordinateConverter | null }).__coordConv = null;
       if (engine) {
         setTimeout(() => {
           try { engine.destroy(); } catch (_e) { /* noop */ }
@@ -314,5 +345,5 @@ export function useParticleEngine() {
     });
   }, []);
 
-  return { canvasRef, handleClick };
+  return { canvasRef, handleClick, triggerExplosionAtScreen, converter };
 }

@@ -1,6 +1,7 @@
 import ParticleCanvas from "@/components/ParticleCanvas";
 import ControlPanel from "@/components/ControlPanel";
 import StatsOverlay from "@/components/StatsOverlay";
+import ConflictDialog from "@/components/ConflictDialog";
 
 export default function Home() {
   return (
@@ -8,6 +9,7 @@ export default function Home() {
       <ParticleCanvas />
       <ControlPanel />
       <StatsOverlay />
+      <ConflictDialog />
     </div>
   );
 }

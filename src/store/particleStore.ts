@@ -33,6 +33,7 @@ export interface Preset {
   explosion: ExplosionConfig;
   isCustom?: boolean;
   createdAt?: number;
+  groupId?: string;
 }
 
 export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
@@ -159,10 +160,47 @@ export interface RecordedEvent {
   payload: Record<string, unknown>;
 }
 
+// 录制起点快照 - 记录录制开始瞬间的完整参数状态
+export interface RecordingSnapshot {
+  particleConfig: ParticleConfig;
+  explosionConfig: ExplosionConfig;
+  activePresetId: string;
+}
+
 export interface Recording {
   id: string;
   name: string;
   duration: number;
   events: RecordedEvent[];
   createdAt: number;
+  startSnapshot: RecordingSnapshot; // 录制起点完整状态
+  groupId?: string;
+}
+
+// 分组管理
+export interface Group {
+  id: string;
+  name: string;
+  icon: string;
+  createdAt: number;
+}
+
+export const DEFAULT_GROUPS: Group[] = [
+  { id: "default", name: "未分组", icon: "📁", createdAt: 0 },
+];
+
+// 导入冲突处理方式
+export type ConflictResolveMode =
+  | "overwrite"   // 覆盖
+  | "skip"        // 跳过
+  | "rename"      // 另存一份
+  | "ask";        // 询问用户
+
+export interface ConflictItem {
+  kind: "preset" | "recording" | "group";
+  id: string;
+  name: string;
+  existingName: string;
+  incoming: Record<string, unknown>;
+  existing: Record<string, unknown>;
 }

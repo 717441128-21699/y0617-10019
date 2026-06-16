@@ -2,44 +2,19 @@ import { useRef } from "react";
 import { useParticleStore } from "@/store/useParticleStore";
 import { Download, Upload } from "lucide-react";
 
-interface ExportedConfig {
-  version: number;
-  particleConfig: Record<string, unknown>;
-  explosionConfig: Record<string, unknown>;
-  customPresets: Record<string, unknown>[];
-  recordings: Record<string, unknown>[];
-  activePresetId?: string;
-  exportedAt: string;
-}
-
 export default function ExportButton() {
-  const {
-    particleConfig,
-    explosionConfig,
-    customPresets,
-    recordings,
-    activePresetId,
-    loadConfig,
-  } = useParticleStore();
+  const { loadConfig, exportBundle } = useParticleStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExport = () => {
-    const payload: ExportedConfig = {
-      version: 3,
-      particleConfig: JSON.parse(JSON.stringify(particleConfig)),
-      explosionConfig: JSON.parse(JSON.stringify(explosionConfig)),
-      customPresets: JSON.parse(JSON.stringify(customPresets)),
-      recordings: JSON.parse(JSON.stringify(recordings)),
-      activePresetId: activePresetId || undefined,
-      exportedAt: new Date().toISOString(),
-    };
+    const payload = exportBundle();
     const json = JSON.stringify(payload, null, 2);
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "particle-config.json";
+    a.download = "particle-workbench.json";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -83,7 +58,7 @@ export default function ExportButton() {
                    hover:shadow-cyan-700/40 border border-cyan-400/20"
       >
         <Download size={14} />
-        Export JSON
+        Export All
       </button>
       <button
         onClick={handleImport}
