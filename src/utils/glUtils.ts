@@ -117,8 +117,8 @@ export function createParticleEngine(
 
   const updateUniforms = getUniformLocations(gl, updateProgram, [
     "uDeltaTime", "uTime", "uResolution", "uGravity", "uWind",
-    "uTurbulence", "uEmissionRate",
-    "uExpPos[0]", "uExpTime[0]", "uExpStrength[0]", "uExpRadius[0]", "uExpDuration[0]", "uExpCount",
+    "uTurbulence", "uEmissionRate", "uEmitterShape",
+    "uExpPos[0]", "uExpTime[0]", "uExpStrength[0]", "uExpRadius[0]", "uExpDuration[0]", "uExpSeq[0]", "uExpCount",
     "uColorStart", "uColorEnd",
   ]);
 
@@ -181,6 +181,8 @@ export function createParticleEngine(
   const expStrength = new Float32Array(MAX_EXPLOSIONS);
   const expRadius  = new Float32Array(MAX_EXPLOSIONS);
   const expDuration = new Float32Array(MAX_EXPLOSIONS);
+  const expSeq     = new Float32Array(MAX_EXPLOSIONS);
+  let globalExpSeq = 0;
   let expCount = 0;
   let expWriteIndex = 0;
   let lastExpIndex = -1;
@@ -200,6 +202,7 @@ export function createParticleEngine(
     gl.uniform1fv(updateUniforms["uExpStrength[0]"]!, expStrength);
     gl.uniform1fv(updateUniforms["uExpRadius[0]"]!, expRadius);
     gl.uniform1fv(updateUniforms["uExpDuration[0]"]!, expDuration);
+    gl.uniform1fv(updateUniforms["uExpSeq[0]"]!, expSeq);
     gl.uniform1i(updateUniforms.uExpCount!, expCount);
   }
 
@@ -218,6 +221,7 @@ export function createParticleEngine(
     );
     gl.uniform1f(updateUniforms.uTurbulence, (uniforms.uTurbulence as number) ?? 0.4);
     gl.uniform1f(updateUniforms.uEmissionRate, (uniforms.uEmissionRate as number) ?? 0.5);
+    gl.uniform1i(updateUniforms.uEmitterShape!, (uniforms.uEmitterShape as number) ?? 0);
 
     uploadExplosionUniforms();
 
@@ -293,12 +297,14 @@ export function createParticleEngine(
     const duration = params.duration ?? 1.2;
 
     const idx = expWriteIndex;
+    globalExpSeq++;
     expPos[idx * 2]     = x;
     expPos[idx * 2 + 1] = y;
     expTime[idx]        = engineTime;
     expStrength[idx]    = strength;
     expRadius[idx]      = radius;
     expDuration[idx]    = duration;
+    expSeq[idx]         = globalExpSeq;
 
     lastExpIndex = idx;
 

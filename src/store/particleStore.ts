@@ -1,3 +1,12 @@
+export type EmitterShape = "point" | "ring" | "rect" | "bottom";
+
+export const EMITTER_SHAPES: { id: EmitterShape; name: string; icon: string }[] = [
+  { id: "point", name: "点源", icon: "●" },
+  { id: "ring", name: "圆环", icon: "◎" },
+  { id: "rect", name: "矩形", icon: "▢" },
+  { id: "bottom", name: "底部", icon: "╶" },
+];
+
 export interface ParticleConfig {
   emissionRate: number;
   gravity: { x: number; y: number };
@@ -7,6 +16,7 @@ export interface ParticleConfig {
   colorEnd: { r: number; g: number; b: number; a: number };
   particleSize: number;
   maxParticles: number;
+  emitterShape: EmitterShape;
 }
 
 export interface ExplosionConfig {
@@ -21,6 +31,8 @@ export interface Preset {
   icon: string;
   particle: ParticleConfig;
   explosion: ExplosionConfig;
+  isCustom?: boolean;
+  createdAt?: number;
 }
 
 export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
@@ -32,6 +44,7 @@ export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
   colorEnd: { r: 0.1, g: 0.2, b: 0.9, a: 0.0 },
   particleSize: 4.0,
   maxParticles: 50000,
+  emitterShape: "point",
 };
 
 export const DEFAULT_EXPLOSION_CONFIG: ExplosionConfig = {
@@ -40,12 +53,12 @@ export const DEFAULT_EXPLOSION_CONFIG: ExplosionConfig = {
   duration: 1.2,
 };
 
-export const PRESETS: Preset[] = [
+export const BUILTIN_PRESETS: Preset[] = [
   {
     id: "default",
     name: "Default",
     icon: "✨",
-    particle: { ...DEFAULT_PARTICLE_CONFIG },
+    particle: { ...DEFAULT_PARTICLE_CONFIG, emitterShape: "point" },
     explosion: { ...DEFAULT_EXPLOSION_CONFIG },
   },
   {
@@ -61,6 +74,7 @@ export const PRESETS: Preset[] = [
       colorEnd: { r: 0.1, g: 0.3, b: 0.9, a: 0.0 },
       particleSize: 3.5,
       maxParticles: 50000,
+      emitterShape: "point",
     },
     explosion: {
       strength: 14000,
@@ -81,6 +95,7 @@ export const PRESETS: Preset[] = [
       colorEnd: { r: 1.0, g: 0.1, b: 0.3, a: 0.0 },
       particleSize: 4.5,
       maxParticles: 50000,
+      emitterShape: "point",
     },
     explosion: {
       strength: 22000,
@@ -101,6 +116,7 @@ export const PRESETS: Preset[] = [
       colorEnd: { r: 0.2, g: 0.1, b: 0.6, a: 0.0 },
       particleSize: 6.0,
       maxParticles: 50000,
+      emitterShape: "ring",
     },
     explosion: {
       strength: 6000,
@@ -121,6 +137,7 @@ export const PRESETS: Preset[] = [
       colorEnd: { r: 1.0, g: 0.15, b: 0.05, a: 0.0 },
       particleSize: 5.0,
       maxParticles: 50000,
+      emitterShape: "bottom",
     },
     explosion: {
       strength: 12000,
@@ -129,3 +146,23 @@ export const PRESETS: Preset[] = [
     },
   },
 ];
+
+// 录制回放类型
+export type RecordedEventType =
+  | "param_change"
+  | "explosion"
+  | "preset_apply";
+
+export interface RecordedEvent {
+  type: RecordedEventType;
+  time: number;
+  payload: Record<string, unknown>;
+}
+
+export interface Recording {
+  id: string;
+  name: string;
+  duration: number;
+  events: RecordedEvent[];
+  createdAt: number;
+}

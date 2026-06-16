@@ -18,6 +18,7 @@ uniform vec2 uGravity;
 uniform vec2 uWind;
 uniform float uTurbulence;
 uniform float uEmissionRate;
+uniform int   uEmitterShape; // 0=point, 1=ring, 2=rect, 3=bottom
 
 uniform vec2  uExpPos[MAX_EXPLOSIONS];
 uniform float uExpTime[MAX_EXPLOSIONS];
@@ -25,6 +26,7 @@ uniform float uExpStrength[MAX_EXPLOSIONS];
 uniform float uExpRadius[MAX_EXPLOSIONS];
 uniform float uExpDuration[MAX_EXPLOSIONS];
 uniform int   uExpCount;
+uniform float uExpSeq[MAX_EXPLOSIONS];
 
 uniform vec4 uColorStart;
 uniform vec4 uColorEnd;
@@ -55,7 +57,7 @@ bool explosionActive(int i) {
 }
 
 float getExplosionIdFloat(int i) {
-    return float(i + 1) * 10000.0 + uExpTime[i] * 100.0;
+    return 100000.0 + uExpSeq[i] * 10.0 + float(i + 1);
 }
 
 float getHighestExplosionId() {
@@ -176,10 +178,35 @@ void main() {
             float continuousChance = uEmissionRate * dt * 20.0;
             float c = hash(s + floor(uTime * 120.0) * 0.01);
             if (c < continuousChance) {
-                float angle = hash(s + uTime * 1.731) * 6.2831853;
-                float speed = hash(s + uTime * 2.311) * 120.0 + 20.0;
-                newPos = uResolution * 0.5;
-                newVel = vec2(cos(angle), sin(angle)) * speed;
+                float emitAngle = hash(s * 0.00131 + uTime * 1.731) * 6.2831853;
+                float emitSpeed = hash(s * 0.00231 + uTime * 2.311) * 120.0 + 20.0;
+
+                vec2 emitPos = uResolution * 0.5;
+                vec2 emitVel = vec2(cos(emitAngle), sin(emitAngle)) * emitSpeed;
+
+                if (uEmitterShape == 1) { // ring
+                    float ringAngle = hash(s * 0.00311 + uTime * 0.731) * 6.2831853;
+                    float ringR = min(uResolution.x, uResolution.y) * 0.18;
+                    emitPos = uResolution * 0.5 + vec2(cos(ringAngle), sin(ringAngle)) * ringR;
+                    float outAngle = ringAngle + (hash(s * 0.0051 + uTime) - 0.5) * 0.6;
+                    float outSpeed = 80.0 + hash(s * 0.0071 + uTime) * 140.0;
+                    emitVel = vec2(cos(outAngle), sin(outAngle)) * outSpeed;
+                } else if (uEmitterShape == 2) { // rect
+                    float rx = hash(s * 0.00317 + uTime * 1.311) * uResolution.x * 0.7 + uResolution.x * 0.15;
+                    float ry = hash(s * 0.00517 + uTime * 2.137) * uResolution.y * 0.6 + uResolution.y * 0.2;
+                    emitPos = vec2(rx, ry);
+                    emitVel = vec2((hash(s * 0.00713 + uTime) - 0.5) * 120.0,
+                                   (hash(s * 0.00913 + uTime) - 0.5) * 120.0);
+                } else if (uEmitterShape == 3) { // bottom
+                    float bx = hash(s * 0.00417 + uTime * 1.31) * uResolution.x * 0.9 + uResolution.x * 0.05;
+                    emitPos = vec2(bx, 10.0);
+                    float upAngle = 1.5708 + (hash(s * 0.00613 + uTime) - 0.5) * 1.2;
+                    float upSpeed = 120.0 + hash(s * 0.00813 + uTime) * 200.0;
+                    emitVel = vec2(cos(upAngle), sin(upAngle)) * upSpeed;
+                }
+
+                newPos = emitPos;
+                newVel = emitVel;
                 newLife = 1.0;
                 newMaxLife = hash(s + uTime * 3.171) * 3.0 + 1.5;
                 newSeed = s;

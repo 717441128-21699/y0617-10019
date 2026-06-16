@@ -6,19 +6,31 @@ interface ExportedConfig {
   version: number;
   particleConfig: Record<string, unknown>;
   explosionConfig: Record<string, unknown>;
+  customPresets: Record<string, unknown>[];
+  recordings: Record<string, unknown>[];
   activePresetId?: string;
   exportedAt: string;
 }
 
 export default function ExportButton() {
-  const { particleConfig, explosionConfig, activePresetId, loadConfig } = useParticleStore();
+  const {
+    particleConfig,
+    explosionConfig,
+    customPresets,
+    recordings,
+    activePresetId,
+    loadConfig,
+  } = useParticleStore();
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExport = () => {
     const payload: ExportedConfig = {
-      version: 2,
+      version: 3,
       particleConfig: JSON.parse(JSON.stringify(particleConfig)),
       explosionConfig: JSON.parse(JSON.stringify(explosionConfig)),
+      customPresets: JSON.parse(JSON.stringify(customPresets)),
+      recordings: JSON.parse(JSON.stringify(recordings)),
       activePresetId: activePresetId || undefined,
       exportedAt: new Date().toISOString(),
     };
