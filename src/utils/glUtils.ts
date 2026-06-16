@@ -61,15 +61,27 @@ export function createProgram(
   return program;
 }
 
-const FLOATS_PER_PARTICLE = 8;
+const FLOATS_PER_PARTICLE = 9;
 const BYTES_PER_PARTICLE = FLOATS_PER_PARTICLE * 4;
 
 const ATTRIBS = [
-  { name: "aPosition", size: 2, offset: 0 },
-  { name: "aVelocity", size: 2, offset: 2 },
-  { name: "aLife", size: 1, offset: 4 },
-  { name: "aMaxLife", size: 1, offset: 5 },
-  { name: "aSeed", size: 1, offset: 6 },
+  { name: "aPosition",   size: 2, offset: 0 },
+  { name: "aVelocity",   size: 2, offset: 2 },
+  { name: "aLife",       size: 1, offset: 4 },
+  { name: "aMaxLife",    size: 1, offset: 5 },
+  { name: "aSeed",       size: 1, offset: 6 },
+  { name: "aExplosionId",size: 1, offset: 7 },
+  { name: "aPad",        size: 1, offset: 8 },
+];
+
+const TF_VARYINGS = [
+  "vPosition",   // vec2  0-1
+  "vVelocity",   // vec2  2-3
+  "vLife",       // f     4
+  "vMaxLife",    // f     5
+  "vSeed",       // f     6
+  "vExplosionId",// f     7
+  "vPad",        // f     8
 ];
 
 export interface ParticleEngine {
@@ -86,12 +98,7 @@ export function createParticleEngine(
   gl: WebGL2RenderingContext,
   maxParticles: number
 ): ParticleEngine | null {
-  const updateProgram = createProgram(
-    gl,
-    UPDATE_VERT,
-    UPDATE_FRAG,
-    ["vPosition", "vVelocity", "vLife", "vMaxLife", "vSeed"]
-  );
+  const updateProgram = createProgram(gl, UPDATE_VERT, UPDATE_FRAG, TF_VARYINGS);
   if (!updateProgram) return null;
 
   const renderProgram = createProgram(gl, RENDER_VERT, RENDER_FRAG);
@@ -100,7 +107,7 @@ export function createParticleEngine(
   const updateUniforms = getUniformLocations(gl, updateProgram, [
     "uDeltaTime", "uTime", "uResolution", "uGravity", "uWind",
     "uTurbulence", "uEmissionRate", "uExplosionPos", "uExplosionTime",
-    "uExplosionStrength",
+    "uExplosionStrength", "uExplosionId", "uColorStart", "uColorEnd",
   ]);
 
   const renderUniforms = getUniformLocations(gl, renderProgram, [
@@ -108,32 +115,33 @@ export function createParticleEngine(
   ]);
 
   const updateAttribs = getAttribLocations(gl, updateProgram, [
-    "aPosition", "aVelocity", "aLife", "aMaxLife", "aSeed",
+    "aPosition", "aVelocity", "aLife", "aMaxLife", "aSeed", "aExplosionId", "aPad",
   ]);
 
   const renderAttribs = getAttribLocations(gl, renderProgram, [
-    "aPosition", "aVelocity", "aLife", "aMaxLife", "aSeed",
+    "aPosition", "aVelocity", "aLife", "aMaxLife", "aSeed", "aExplosionId", "aPad",
   ]);
 
   const particleData = new Float32Array(maxParticles * FLOATS_PER_PARTICLE);
   for (let i = 0; i < maxParticles; i++) {
-    const offset = i * FLOATS_PER_PARTICLE;
-    particleData[offset] = -9999;
-    particleData[offset + 1] = -9999;
-    particleData[offset + 2] = 0;
-    particleData[offset + 3] = 0;
-    particleData[offset + 4] = 0;
-    particleData[offset + 5] = 1.0 + Math.random() * 3.0;
-    particleData[offset + 6] = Math.random() * 10000.0;
-    particleData[offset + 7] = 0;
+    const o = i * FLOATS_PER_PARTICLE;
+    particleData[o]     = -99999;
+    particleData[o + 1] = -99999;
+    particleData[o + 2] = 0;
+    particleData[o + 3] = 0;
+    particleData[o + 4] = 0;
+    particleData[o + 5] = 1.5 + Math.random() * 3.0;
+    particleData[o + 6] = Math.random() * 100000.0;
+    particleData[o + 7] = 0;
+    particleData[o + 8] = 0;
   }
 
-  const vao0 = gl.createVertexArray();
-  const vao1 = gl.createVertexArray();
-  const vbo0 = gl.createBuffer();
-  const vbo1 = gl.createBuffer();
-  const tf0 = gl.createTransformFeedback();
-  const tf1 = gl.createTransformFeedback();
+  const vao0 = gl.createVertexArray()!;
+  const vao1 = gl.createVertexArray()!;
+  const vbo0 = gl.createBuffer()!;
+  const vbo1 = gl.createBuffer()!;
+  const tf0 = gl.createTransformFeedback()!;
+  const tf1 = gl.createTransformFeedback()!;
 
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo0);
   gl.bufferData(gl.ARRAY_BUFFER, particleData, gl.DYNAMIC_COPY);
@@ -149,15 +157,16 @@ export function createParticleEngine(
   gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, vbo1);
   gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
 
-  const renderVAO0 = gl.createVertexArray();
-  const renderVAO1 = gl.createVertexArray();
+  const renderVAO0 = gl.createVertexArray()!;
+  const renderVAO1 = gl.createVertexArray()!;
   setupVAO(gl, renderVAO0, vbo0, renderAttribs);
   setupVAO(gl, renderVAO1, vbo1, renderAttribs);
 
   let currentReadIndex = 0;
-  let explosionTime = -10.0;
+  let explosionTime = -100.0;
   let explosionStrength = 0.0;
   let explosionPos = [0, 0];
+  let explosionId = 0;
   let resolution = [gl.canvas.width, gl.canvas.height];
   let activeCount = 0;
   let frameCount = 0;
@@ -165,22 +174,32 @@ export function createParticleEngine(
 
   const uniforms: Record<string, Float32Array | number> = {};
 
-  function swap() {
-    currentReadIndex = 1 - currentReadIndex;
-  }
+  function swap() { currentReadIndex = 1 - currentReadIndex; }
 
   function update(deltaTime: number, time: number) {
     gl.useProgram(updateProgram);
     gl.uniform1f(updateUniforms.uDeltaTime, deltaTime);
     gl.uniform1f(updateUniforms.uTime, time);
     gl.uniform2f(updateUniforms.uResolution, resolution[0], resolution[1]);
-    gl.uniform2f(updateUniforms.uGravity, uniforms.uGravity?.[0] ?? 0, uniforms.uGravity?.[1] ?? -2.0);
-    gl.uniform2f(updateUniforms.uWind, uniforms.uWind?.[0] ?? 0.5, uniforms.uWind?.[1] ?? 0);
+    gl.uniform2f(updateUniforms.uGravity,
+      (uniforms.uGravity as Float32Array)?.[0] ?? 0,
+      (uniforms.uGravity as Float32Array)?.[1] ?? -2.0
+    );
+    gl.uniform2f(updateUniforms.uWind,
+      (uniforms.uWind as Float32Array)?.[0] ?? 0.5,
+      (uniforms.uWind as Float32Array)?.[1] ?? 0
+    );
     gl.uniform1f(updateUniforms.uTurbulence, (uniforms.uTurbulence as number) ?? 0.4);
     gl.uniform1f(updateUniforms.uEmissionRate, (uniforms.uEmissionRate as number) ?? 0.5);
     gl.uniform2f(updateUniforms.uExplosionPos, explosionPos[0], explosionPos[1]);
     gl.uniform1f(updateUniforms.uExplosionTime, explosionTime);
     gl.uniform1f(updateUniforms.uExplosionStrength, explosionStrength);
+    gl.uniform1f(updateUniforms.uExplosionId, explosionId);
+
+    const cs = uniforms.uColorStart ?? new Float32Array([0, 0.95, 0.85, 1]);
+    const ce = uniforms.uColorEnd ?? new Float32Array([0.1, 0.2, 0.9, 0]);
+    gl.uniform4f(updateUniforms.uColorStart, cs[0], cs[1], cs[2], cs[3]);
+    gl.uniform4f(updateUniforms.uColorEnd, ce[0], ce[1], ce[2], ce[3]);
 
     const readVAO = currentReadIndex === 0 ? vao0 : vao1;
     const writeTF = currentReadIndex === 0 ? tf1 : tf0;
@@ -195,22 +214,22 @@ export function createParticleEngine(
     gl.disable(gl.RASTERIZER_DISCARD);
 
     gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
+    gl.bindVertexArray(null);
 
     swap();
 
-    if (time - explosionTime > 1.0) {
-      explosionStrength = 0;
-    }
-
     frameCount++;
-    if (frameCount % 30 === 0) {
+    if (frameCount % 20 === 0) {
       const readBuffer = currentReadIndex === 0 ? vbo0 : vbo1;
       gl.bindBuffer(gl.ARRAY_BUFFER, readBuffer);
       gl.getBufferSubData(gl.ARRAY_BUFFER, 0, sampleBuffer);
-      activeCount = 0;
+      let count = 0;
       for (let i = 0; i < maxParticles; i++) {
-        if (sampleBuffer[i * FLOATS_PER_PARTICLE + 4] > 0) activeCount++;
+        const life = sampleBuffer[i * FLOATS_PER_PARTICLE + 4];
+        const posx = sampleBuffer[i * FLOATS_PER_PARTICLE];
+        if (life > 0 && posx > -10000) count++;
       }
+      activeCount = count;
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
     }
   }
@@ -239,7 +258,8 @@ export function createParticleEngine(
   }
 
   function triggerExplosion(x: number, y: number, engineTime: number, strength: number = 8000) {
-    explosionPos = [x, resolution[1] - y];
+    explosionId++;
+    explosionPos = [x, y];
     explosionTime = engineTime;
     explosionStrength = strength;
   }
@@ -253,9 +273,7 @@ export function createParticleEngine(
     Object.assign(uniforms, newUniforms);
   }
 
-  function getActiveCount() {
-    return activeCount;
-  }
+  function getActiveCount() { return activeCount; }
 
   function destroy() {
     gl.deleteProgram(updateProgram);
@@ -270,15 +288,7 @@ export function createParticleEngine(
     gl.deleteTransformFeedback(tf1);
   }
 
-  return {
-    update,
-    render,
-    triggerExplosion,
-    resize,
-    setUniforms,
-    getActiveCount,
-    destroy,
-  };
+  return { update, render, triggerExplosion, resize, setUniforms, getActiveCount, destroy };
 }
 
 function getUniformLocations(
@@ -287,9 +297,7 @@ function getUniformLocations(
   names: string[]
 ): Record<string, WebGLUniformLocation | null> {
   const locations: Record<string, WebGLUniformLocation | null> = {};
-  for (const name of names) {
-    locations[name] = gl.getUniformLocation(program, name);
-  }
+  for (const name of names) locations[name] = gl.getUniformLocation(program, name);
   return locations;
 }
 
@@ -299,9 +307,7 @@ function getAttribLocations(
   names: string[]
 ): Record<string, number> {
   const locations: Record<string, number> = {};
-  for (const name of names) {
-    locations[name] = gl.getAttribLocation(program, name);
-  }
+  for (const name of names) locations[name] = gl.getAttribLocation(program, name);
   return locations;
 }
 
@@ -313,7 +319,6 @@ function setupVAO(
 ) {
   gl.bindVertexArray(vao);
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-
   const stride = FLOATS_PER_PARTICLE * 4;
   for (const attr of ATTRIBS) {
     const loc = attribs[attr.name];
@@ -322,7 +327,6 @@ function setupVAO(
       gl.vertexAttribPointer(loc, attr.size, gl.FLOAT, false, stride, attr.offset * 4);
     }
   }
-
   gl.bindVertexArray(null);
   gl.bindBuffer(gl.ARRAY_BUFFER, null);
 }
